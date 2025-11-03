@@ -1,47 +1,34 @@
-// server.js — Minimal MCP-like Express server
+// server.js — MCP Server for ChatGPT App SDK
 const express = require('express');
 const bodyParser = require('body-parser');
 const fs = require('fs');
 const path = require('path');
-const cors = require('cors');
+
 
 const app = express();
-
-// Configure CORS for ChatGPT
-app.use(cors({
-  origin: ['https://chatgpt.com', 'https://chat.openai.com'],
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: false
-}));
-
 app.use(bodyParser.json());
 
-// Handle preflight requests
-app.options('*', (req, res) => {
-  res.header('Access-Control-Allow-Origin', 'https://chatgpt.com');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.sendStatus(200);
+// CORS middleware for ChatGPT App SDK
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
 });
 
 
-// Serve a static descriptor — ChatGPT will GET this URL to learn the app's tools
+// Serve the MCP descriptor — ChatGPT will GET this URL to learn the app's tools
 app.get('/.well-known/mcp-descriptor.json', (req, res) => {
   const descPath = path.join(__dirname, 'mcp-descriptor.json');
   if (!fs.existsSync(descPath)) return res.status(500).json({ error: 'Descriptor missing' });
-
-  try {
-    const content = fs.readFileSync(descPath, 'utf8');
-    const descriptor = JSON.parse(content);
-
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Access-Control-Allow-Origin', 'https://chatgpt.com');
-    res.json(descriptor);
-  } catch (error) {
-    console.error('Error reading descriptor:', error);
-    res.status(500).json({ error: 'Invalid descriptor file' });
-  }
+  const content = fs.readFileSync(descPath, 'utf8');
+  res.setHeader('Content-Type', 'application/json');
+  res.send(content);
 });
 
 
