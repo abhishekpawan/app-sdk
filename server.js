@@ -1,217 +1,270 @@
-// server.js — MCP Server for ChatGPT App SDK
-const express = require('express');
-const bodyParser = require('body-parser');
-const fs = require('fs');
-const path = require('path');
-
+// MCP Server for Bajaj Personal Loan - ChatGPT App SDK
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import express from 'express';
+import { z } from 'zod';
 
 const app = express();
-app.use(bodyParser.json());
+app.use(express.json());
 
-// CORS middleware for ChatGPT App SDK
+// CORS middleware
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  
-  // Handle preflight requests
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
   next();
 });
 
+// EMI Calculation Function
+function calculateEMI(principal, tenureMonths, interestRatePA) {
+  // Convert annual rate to monthly rate
+  const monthlyRate = interestRatePA / (12 * 100);
+  
+  // EMI formula: P × r × (1 + r)^n / ((1 + r)^n - 1)
+  const emi = (principal * monthlyRate * Math.pow(1 + monthlyRate, tenureMonths)) / 
+              (Math.pow(1 + monthlyRate, tenureMonths) - 1);
+  
+  return Math.round(emi);
+}
 
-// Serve the MCP descriptor — ChatGPT will GET this URL to learn the app's tools
-app.get('/.well-known/mcp-descriptor.json', (req, res) => {
-  const descPath = path.join(__dirname, 'mcp-descriptor.json');
-  if (!fs.existsSync(descPath)) return res.status(500).json({ error: 'Descriptor missing' });
-  const content = fs.readFileSync(descPath, 'utf8');
-  res.setHeader('Content-Type', 'application/json');
-  res.send(content);
+// Create MCP server instance
+const server = new McpServer({
+  name: 'bajaj-personal-loan-app',
+  version: '0.1.0',
 });
 
-
-// Example tool: getWeather
-app.post('/tool/getWeather', (req, res) => {
-  const { city } = req.body || {};
-  if (!city) return res.status(400).json({ error: 'Missing city in request body' });
-
-
-  // Fake response — replace with a real API call (OpenWeatherMap, etc.)
-  const result = {
-    city,
-    tempC: 24,
-    condition: 'Partly cloudy',
-    // _meta is optional and can contain a small HTML snippet to render in ChatGPT's UI
-    _meta: `<div style="font-family:Arial,sans-serif;padding:6px;border-radius:8px;">
-<strong>${city}</strong>: 24°C · Partly cloudy
-<div style="font-size:11px;opacity:0.8">Click for full forecast</div>
-</div>`
-  };
-
-
-  res.json(result);
-});
-
-// Personal Loan Information tool
-app.post('/tool/getPersonalLoanInfo', (req, res) => {
-  const { loanAmount = 100000, tenure = 96, loanVariant = 'flexi_hybrid', infoType } = req.body || {};
-
-  if (!infoType) {
-    return res.status(400).json({ error: 'Missing infoType in request body' });
-  }
-
-  // Validate loan amount
-  if (loanAmount < 40000 || loanAmount > 5500000) {
-    return res.status(400).json({ error: 'Loan amount must be between ₹40,000 and ₹55,00,000' });
-  }
-
-  // Validate tenure
-  if (tenure < 12 || tenure > 96) {
-    return res.status(400).json({ error: 'Tenure must be between 12 and 96 months' });
-  }
-
-  // Calculate EMI based on variant and amount
-  const calculateEMI = (amount, tenureMonths, variant) => {
-    let rate = 0.15; // 15% annual rate
-    let monthlyRate = rate / 12;
-
-    switch (variant) {
-      case 'term_loan':
-        // Standard EMI calculation
-        return Math.round((amount * monthlyRate * Math.pow(1 + monthlyRate, tenureMonths)) /
-          (Math.pow(1 + monthlyRate, tenureMonths) - 1));
-      case 'flexi_hybrid':
-        // Interest-only for first 24 months, then regular EMI
-        if (tenureMonths <= 24) {
-          return Math.round(amount * monthlyRate); // Interest only
-        } else {
-          return Math.round(amount * monthlyRate * 1.7); // Approximation for subsequent EMI
-        }
-      case 'flexi_dropline':
-        return Math.round(amount * monthlyRate * 1.44); // Approximation
-      default:
-        return Math.round(amount * monthlyRate * 1.27);
-    }
-  };
-
-  const eligibilityCriteria = {
-    minAge: 21,
-    maxAge: 80,
-    nationality: "Indian",
-    employment: "Public, private, or MNC",
-    cibilScore: 650
-  };
-
-  const features = [
-    "Disbursal in 24 hours",
-    "Flexible tenures from 12 to 96 months",
-    "No collateral required",
-    "No hidden charges",
-    "3 unique loan variants",
-    "Loan amount up to ₹55 lakh",
-    "Quick approval in 5 minutes",
-    "No guarantor needed"
-  ];
-
-  const documentsRequired = [
-    "Aadhaar/Passport/Voter ID/Driving License",
-    "PAN Card",
-    "Employee ID Card",
-    "Salary slips of last 3 months",
-    "Bank statements of previous 3 months",
-    "Utility bills (Gas/Electricity/Phone)"
-  ];
-
-  const charges = {
-    interestRate: "10% to 31% p.a.",
-    processingFee: "Up to 3.93% of loan amount (inclusive of taxes)",
-    prepaymentCharges: "Up to 4.72% for Term Loan, No charges for Flexi loans",
-    bounceCharges: "₹700 to ₹1,200 per bounce"
-  };
-
-  const variants = [
-    {
-      name: "Term Loan",
-      description: "Fixed EMIs covering both principal and interest",
-      features: ["Single disbursement", "12-96 months tenure", "No flexi facility charges"]
+// Register EMI Calculator Tool
+server.registerTool(
+  'calculateEMI',
+  {
+    title: 'Calculate Personal Loan EMI',
+    description: 'Calculate monthly EMI (Equated Monthly Installment) for Bajaj Personal Loan',
+    inputSchema: {
+      loanAmount: z.number().min(40000).max(5500000).describe('Loan amount (₹40,000 to ₹55,00,000)'),
+      tenure: z.number().int().min(12).max(96).describe('Loan tenure in months (12 to 96)'),
+      interestRate: z.number().min(10).max(31).default(15).optional().describe('Annual interest rate % (10% to 31% p.a.)'),
     },
-    {
-      name: "Flexi Hybrid Term Loan",
-      description: "Interest-only EMIs for initial 24 months, then regular EMIs",
-      features: ["Flexible withdrawals", "No part-prepayment charges", "Interest-only EMIs initially"]
-    },
-    {
-      name: "Flexi Term (Dropline) Loan",
-      description: "Fixed EMIs on withdrawn amount with flexible repayment",
-      features: ["Multiple withdrawals", "No part-prepayment charges", "Flexible repayment"]
-    }
-  ];
+  },
+  async ({ loanAmount, tenure, interestRate = 15 }) => {
+    const emiAmount = calculateEMI(loanAmount, tenure, interestRate);
+    const totalPayment = emiAmount * tenure;
+    const totalInterest = totalPayment - loanAmount;
 
-  const emiAmount = calculateEMI(loanAmount, tenure, loanVariant);
+    const result = {
+      loanAmount: `₹${loanAmount.toLocaleString('en-IN')}`,
+      tenure: `${tenure} months (${Math.floor(tenure / 12)} years ${tenure % 12} months)`,
+      interestRate: `${interestRate}% p.a.`,
+      monthlyEMI: `₹${emiAmount.toLocaleString('en-IN')}`,
+      totalInterest: `₹${totalInterest.toLocaleString('en-IN')}`,
+      totalPayment: `₹${totalPayment.toLocaleString('en-IN')}`,
+      processingFee: 'Up to 3.93% of loan amount (inclusive of taxes)',
+    };
 
-  let result = {
-    loanAmount,
-    tenure,
-    loanVariant,
-    emiAmount
-  };
-
-  // Add information based on requested type
-  switch (infoType) {
-    case 'emi_calculation':
-      result.interestRate = "15% p.a. (approx)";
-      result.processingFee = charges.processingFee;
-      break;
-    case 'eligibility':
-      result.eligibility = eligibilityCriteria;
-      break;
-    case 'features':
-      result.features = features;
-      break;
-    case 'interest_rates':
-      result.charges = charges;
-      break;
-    case 'documents':
-      result.documents = documentsRequired;
-      break;
-    case 'all':
-      result.eligibility = eligibilityCriteria;
-      result.features = features;
-      result.documents = documentsRequired;
-      result.charges = charges;
-      result.variants = variants;
-      result.interestRate = "15% p.a. (approx)";
-      result.processingFee = charges.processingFee;
-      break;
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `**EMI Calculator Result**\n\n` +
+                `💰 Loan Amount: ${result.loanAmount}\n` +
+                `📅 Tenure: ${result.tenure}\n` +
+                `📊 Interest Rate: ${result.interestRate}\n` +
+                `💳 Monthly EMI: ${result.monthlyEMI}\n` +
+                `📈 Total Interest: ${result.totalInterest}\n` +
+                `💵 Total Payment: ${result.totalPayment}\n\n` +
+                `⚠️ This is an indicative calculation. Actual rates may vary based on eligibility.`,
+        },
+      ],
+    };
   }
+);
 
-  // Add meta HTML for rich display
-  const variantName = variants.find(v => v.name.toLowerCase().includes(loanVariant.replace('_', ' ')))?.name || 'Personal Loan';
+// Register Personal Loan Info Tool
+server.registerTool(
+  'getPersonalLoanInfo',
+  {
+    title: 'Get Personal Loan Information',
+    description: 'Get comprehensive personal loan information from Bajaj Finserv including interest rates, eligibility, features, documents required, and loan variants',
+    inputSchema: {
+      infoType: z.enum(['overview', 'eligibility', 'features', 'interest_rates', 'documents', 'variants', 'all'])
+        .describe('Type of information requested'),
+    },
+  },
+  async ({ infoType }) => {
+    const loanInfo = {
+      overview: {
+        title: 'Bajaj Finserv Personal Loan Overview',
+        description: 'Apply for instant personal loan online of up to ₹55 lakh with minimal documentation and simple eligibility criteria.',
+        highlights: [
+          '💰 Loan Amount: ₹40,000 to ₹55 lakh',
+          '⏱️ Quick disbursal in 24 hours*',
+          '📝 Minimal documentation',
+          '🔒 No collateral required',
+          '💯 No hidden charges',
+          '📊 Interest rates starting @ 10% p.a.',
+          '📅 Flexible tenures: 12 to 96 months',
+        ],
+        url: 'https://www.bajajfinserv.in/personal-loan',
+      },
+      
+      eligibility: {
+        title: 'Personal Loan Eligibility Criteria',
+        criteria: {
+          nationality: 'Indian',
+          age: '21 years to 80 years',
+          employedWith: 'Public, private, or MNC',
+          cibilScore: '650 or higher',
+          customerProfile: 'Self-employed or Salaried',
+        },
+        note: 'You should be 80 years or younger at the end of the loan tenure.',
+      },
 
-  result._meta = `<div style="font-family:Arial,sans-serif;padding:12px;border-radius:8px;background:#f8f9fa;border-left:4px solid #007bff;">
-<h3 style="margin:0 0 8px 0;color:#007bff;">Bajaj Finserv ${variantName}</h3>
-<div style="display:flex;gap:20px;margin-bottom:8px;">
-<div><strong>Loan Amount:</strong> ₹${loanAmount.toLocaleString('en-IN')}</div>
-<div><strong>EMI:</strong> ₹${emiAmount.toLocaleString('en-IN')}</div>
-<div><strong>Tenure:</strong> ${tenure} months</div>
-</div>
-<div style="font-size:12px;color:#666;">
-Interest rates from 10% p.a. • Quick approval in 5 minutes • No collateral required
-</div>
-<div style="font-size:11px;margin-top:4px;color:#888;">
-Click to apply online or get more details
-</div>
-</div>`;
+      features: {
+        title: 'Key Features & Benefits',
+        features: [
+          {
+            name: 'Disbursal in 24 hours',
+            description: 'Your loan amount will be credited to your account within 24 hours* of application approval.',
+          },
+          {
+            name: 'Flexible tenures',
+            description: 'Plan your loan repayment and choose tenure that suits you best (12 to 96 months).',
+          },
+          {
+            name: 'No collateral',
+            description: 'You do not need any collateral or guarantor to get your loan.',
+          },
+          {
+            name: 'No hidden charges',
+            description: 'All applicable fees and charges are mentioned up front.',
+          },
+          {
+            name: '3 unique variants',
+            description: 'Pick the loan variant that suits you best: Term loan, Flexi Term (Dropline) Loan, and Flexi Hybrid Term Loan.',
+          },
+          {
+            name: 'Loan of up to ₹55 lakh',
+            description: 'Manage your small or large expenses with loans ranging from ₹40,000 to ₹55 lakh.',
+          },
+          {
+            name: 'Approval in just 5 minutes',
+            description: 'Complete your entire application online and get instant approval.',
+          },
+        ],
+      },
 
-  res.json(result);
+      interest_rates: {
+        title: 'Personal Loan Interest Rate and Charges',
+        charges: [
+          { type: 'Rate of interest per annum', amount: '10% to 31% p.a.' },
+          { type: 'Processing fees', amount: 'Up to 3.93% of loan amount (inclusive of taxes)' },
+          { type: 'Bounce charges', amount: '₹700 to ₹1,200 per bounce' },
+          { type: 'Prepayment charges (Term Loan)', amount: 'Up to 4.72% (inclusive of taxes) on outstanding amount' },
+          { type: 'Flexi Facility Charge', amount: '₹1,999 to ₹12,999 (for Flexi Loans only)' },
+          { type: 'Penal charge', amount: 'Up to 36% per annum from due date' },
+        ],
+        note: 'Stamp duty is payable as per state laws and deducted upfront from loan amount.',
+      },
+
+      documents: {
+        title: 'Documents Required for Personal Loan',
+        documents: [
+          'PAN Card',
+          'Aadhaar Card / Passport / Voter ID / Driving License',
+          'Latest 3 months salary slips',
+          'Last 3 months bank account statements',
+          'Employee ID card',
+          'Address proof (utility bill, property tax receipt, etc.)',
+          'Recent photograph',
+        ],
+        note: 'Additional documents may be required based on your profile.',
+      },
+
+      variants: {
+        title: 'Compare Personal Loan Variants',
+        variants: [
+          {
+            name: 'Term Loan',
+            description: 'Fixed EMIs that cover both principal and interest',
+            features: [
+              'Fixed EMI throughout tenure',
+              'Predictable payments',
+              'Simple structure',
+              'Best for regular income',
+              'Tenure: 12 to 96 months',
+            ],
+            charges: 'No Flexi facility charges',
+            partPrepayment: 'Up to 4.72% (inclusive of taxes)',
+          },
+          {
+            name: 'Flexi Hybrid Term Loan',
+            description: 'Interest-only EMIs for initial 24 months',
+            features: [
+              'Interest-only EMIs for first 24 months',
+              'Principal repayment starts from 25th month',
+              'Lower initial burden',
+              'Multiple withdrawals allowed',
+              'No part-prepayment charges',
+            ],
+            charges: 'Flexi facility charges: ₹1,999 to ₹12,999',
+            tenure: 'Initial: 24 months, Subsequent: Up to 72 months',
+          },
+          {
+            name: 'Flexi Term (Dropline) Loan',
+            description: 'Fixed EMIs with flexible prepayment options',
+            features: [
+              'Fixed EMIs on withdrawn amount',
+              'Decreasing principal over time',
+              'Part payment options',
+              'No part-prepayment charges',
+              'Multiple withdrawals allowed',
+            ],
+            charges: 'Flexi facility charges: ₹1,999 to ₹12,999',
+            tenure: '12 to 96 months',
+          },
+        ],
+      },
+    };
+
+    let responseData;
+    if (infoType === 'all') {
+      responseData = loanInfo;
+    } else {
+      responseData = loanInfo[infoType];
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(responseData, null, 2),
+        },
+      ],
+    };
+  }
+);
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ ok: true, status: 'MCP Server is running' });
 });
 
+// MCP endpoint using SSE transport
+app.get('/mcp', async (req, res) => {
+  const transport = new SSEServerTransport('/mcp', res);
+  await server.connect(transport);
+});
 
-// Health check
-app.get('/health', (req, res) => res.json({ ok: true }));
-
+app.post('/mcp', async (req, res) => {
+  const transport = new SSEServerTransport('/mcp', res);
+  await server.connect(transport);
+});
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`MCP-like server listening on http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log(`✅ MCP Server running on http://localhost:${PORT}`);
+  console.log(`📡 MCP endpoint: http://localhost:${PORT}/mcp`);
+  console.log(`🏥 Health check: http://localhost:${PORT}/health`);
+});
