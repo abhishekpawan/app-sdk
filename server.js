@@ -1,4 +1,4 @@
-// MCP Server for Bajaj Personal Loan - ChatGPT App SDK
+// MCP Server for bank Personal Loan - ChatGPT App SDK
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import express from 'express';
@@ -7,14 +7,13 @@ import { z } from 'zod';
 const app = express();
 app.use(express.json());
 
-// CORS middleware
+// CORS middleware (add Accept header)
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
+  // Added Accept header
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
 
@@ -32,52 +31,88 @@ function calculateEMI(principal, tenureMonths, interestRatePA) {
 
 // Create MCP server instance
 const server = new McpServer({
-  name: 'bajaj-personal-loan-app',
+  name: 'bank-personal-loan-app',
   version: '0.1.0',
 });
+
+// Widget resource + constant (new)
+const LOAN_WIDGET_URI = 'ui://widget/personal-loan.html';
+server.registerResource(
+  'personal-loan-widget',
+  LOAN_WIDGET_URI,
+  {},
+  async () => ({
+    contents: [
+      {
+        uri: LOAN_WIDGET_URI,
+        mimeType: 'text/html+skybridge',
+        text: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><title>Personal Loan Widget</title><style>body{font-family:system-ui,Arial,sans-serif;padding:12px;}h1{font-size:18px;margin:0 0 8px;}pre{white-space:pre-wrap;word-wrap:break-word;font-size:12px;background:#f7f7f7;padding:8px;border-radius:6px;border:1px solid #e0e0e0;}small{color:#555;}</style></head><body><h1>Personal Loan Data</h1><small>Structured content from tool output</small><div id="root"></div><script type="module">const out=window.openai?.toolOutput;const el=document.getElementById('root');if(out){el.innerHTML='<pre>'+JSON.stringify(out, null, 2)+'</pre>';}</script></body></html>`,
+        _meta: {
+          'openai/widgetPrefersBorder': true,
+          'openai/widgetDescription': 'Displays EMI calculations and loan information.',
+          'openai/widgetCSP': { connect_domains: [], resource_domains: [] }
+        }
+      }
+    ]
+  })
+);
 
 // Register EMI Calculator Tool
 server.registerTool(
   'calculateEMI',
   {
     title: 'Calculate Personal Loan EMI',
-    description: 'Calculate monthly EMI (Equated Monthly Installment) for Bajaj Personal Loan',
+    description: 'Calculate monthly EMI (Equated Monthly Installment) for bank Personal Loan',
     inputSchema: {
       loanAmount: z.number().min(40000).max(5500000).describe('Loan amount (₹40,000 to ₹55,00,000)'),
       tenure: z.number().int().min(12).max(96).describe('Loan tenure in months (12 to 96)'),
-      interestRate: z.number().min(10).max(31).default(15).optional().describe('Annual interest rate % (10% to 31% p.a.)'),
+      interestRate: z.number().min(10).max(31).default(15).optional().describe('Annual interest rate % (10% to 31% p.a.)')
     },
+    _meta: {
+      'openai/outputTemplate': LOAN_WIDGET_URI,
+      'openai/toolInvocation/invoking': 'Calculating EMI…',
+      'openai/toolInvocation/invoked': 'EMI calculated'
+    }
   },
   async ({ loanAmount, tenure, interestRate = 15 }) => {
-    const emiAmount = calculateEMI(loanAmount, tenure, interestRate);
-    const totalPayment = emiAmount * tenure;
-    const totalInterest = totalPayment - loanAmount;
-
-    const result = {
-      loanAmount: `₹${loanAmount.toLocaleString('en-IN')}`,
-      tenure: `${tenure} months (${Math.floor(tenure / 12)} years ${tenure % 12} months)`,
-      interestRate: `${interestRate}% p.a.`,
-      monthlyEMI: `₹${emiAmount.toLocaleString('en-IN')}`,
-      totalInterest: `₹${totalInterest.toLocaleString('en-IN')}`,
-      totalPayment: `₹${totalPayment.toLocaleString('en-IN')}`,
-      processingFee: 'Up to 3.93% of loan amount (inclusive of taxes)',
-    };
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `**EMI Calculator Result**\n\n` +
-                `💰 Loan Amount: ${result.loanAmount}\n` +
-                `📅 Tenure: ${result.tenure}\n` +
-                `📊 Interest Rate: ${result.interestRate}\n` +
-                `💳 Monthly EMI: ${result.monthlyEMI}\n` +
-                `📈 Total Interest: ${result.totalInterest}\n` +
-                `💵 Total Payment: ${result.totalPayment}\n\n` +
-                `⚠️ This is an indicative calculation. Actual rates may vary based on eligibility.`,
+    try {
+      const emiAmount = calculateEMI(loanAmount, tenure, interestRate);
+      const totalPayment = emiAmount * tenure;
+      const totalInterest = totalPayment - loanAmount;
+      return {
+        structuredContent: {
+          principal: loanAmount,
+          tenureMonths: tenure,
+          interestRateAnnualPercent: interestRate,
+          emiMonthly: emiAmount,
+          totalInterest,
+          totalPayment
         },
-      ],
-    };
+        content: [
+          {
+            type: 'text',
+            text: `**EMI Calculator Result**\n\n` +
+              `💰 Loan Amount: ₹${loanAmount.toLocaleString('en-IN')}\n` +
+              `📅 Tenure: ${tenure} months (${Math.floor(tenure / 12)} years ${tenure % 12} months)\n` +
+              `📊 Interest Rate: ${interestRate}% p.a.\n` +
+              `💳 Monthly EMI: ₹${emiAmount.toLocaleString('en-IN')}\n` +
+              `📈 Total Interest: ₹${totalInterest.toLocaleString('en-IN')}\n` +
+              `💵 Total Payment: ₹${totalPayment.toLocaleString('en-IN')}\n\n` +
+              `⚠️ Indicative only. Actual rates may vary.`
+          }
+        ],
+        _meta: {
+          formatted: {
+            loanAmount: `₹${loanAmount.toLocaleString('en-IN')}`,
+            monthlyEMI: `₹${emiAmount.toLocaleString('en-IN')}`,
+            totalInterest: `₹${totalInterest.toLocaleString('en-IN')}`,
+            totalPayment: `₹${totalPayment.toLocaleString('en-IN')}`
+          }
+        }
+      };
+    } catch (e) {
+      return { structuredContent: {}, content: [ { type: 'text', text: 'Error computing EMI.' } ], _meta: { error: String(e?.message || e) } };
+    }
   }
 );
 
@@ -86,163 +121,135 @@ server.registerTool(
   'getPersonalLoanInfo',
   {
     title: 'Get Personal Loan Information',
-    description: 'Get comprehensive personal loan information from Bajaj Finserv including interest rates, eligibility, features, documents required, and loan variants',
+    description: 'Get comprehensive personal loan information from bank Finserv including interest rates, eligibility, features, documents required, and loan variants',
     inputSchema: {
-      infoType: z.enum(['overview', 'eligibility', 'features', 'interest_rates', 'documents', 'variants', 'all'])
-        .describe('Type of information requested'),
+      infoType: z.enum(['overview', 'eligibility', 'features', 'interest_rates', 'documents', 'variants', 'all']).describe('Type of information requested')
     },
+    _meta: {
+      'openai/outputTemplate': LOAN_WIDGET_URI,
+      'openai/toolInvocation/invoking': 'Fetching loan info…',
+      'openai/toolInvocation/invoked': 'Loan info fetched'
+    }
   },
   async ({ infoType }) => {
-    const loanInfo = {
-      overview: {
-        title: 'Bajaj Finserv Personal Loan Overview',
-        description: 'Apply for instant personal loan online of up to ₹55 lakh with minimal documentation and simple eligibility criteria.',
-        highlights: [
-          '💰 Loan Amount: ₹40,000 to ₹55 lakh',
-          '⏱️ Quick disbursal in 24 hours*',
-          '📝 Minimal documentation',
-          '🔒 No collateral required',
-          '💯 No hidden charges',
-          '📊 Interest rates starting @ 10% p.a.',
-          '📅 Flexible tenures: 12 to 96 months',
-        ],
-        url: 'https://www.bajajfinserv.in/personal-loan',
-      },
-      
-      eligibility: {
-        title: 'Personal Loan Eligibility Criteria',
-        criteria: {
-          nationality: 'Indian',
-          age: '21 years to 80 years',
-          employedWith: 'Public, private, or MNC',
-          cibilScore: '650 or higher',
-          customerProfile: 'Self-employed or Salaried',
+    try {
+      const loanInfo = {
+        overview: {
+          title: 'bank Finserv Personal Loan Overview',
+          description: 'Apply for instant personal loan online of up to ₹55 lakh with minimal documentation and simple eligibility criteria.',
+          highlights: [
+            '💰 Loan Amount: ₹40,000 to ₹55 lakh',
+            '⏱️ Quick disbursal in 24 hours*',
+            '📝 Minimal documentation',
+            '🔒 No collateral required',
+            '💯 No hidden charges',
+            '📊 Interest rates starting @ 10% p.a.',
+            '📅 Flexible tenures: 12 to 96 months'
+          ],
+          url: 'https://www.bankfinserv.in/personal-loan'
         },
-        note: 'You should be 80 years or younger at the end of the loan tenure.',
-      },
-
-      features: {
-        title: 'Key Features & Benefits',
-        features: [
-          {
-            name: 'Disbursal in 24 hours',
-            description: 'Your loan amount will be credited to your account within 24 hours* of application approval.',
+        eligibility: {
+          title: 'Personal Loan Eligibility Criteria',
+          criteria: {
+            nationality: 'Indian',
+            age: '21 years to 80 years',
+            employedWith: 'Public, private, or MNC',
+            cibilScore: '650 or higher',
+            customerProfile: 'Self-employed or Salaried'
           },
-          {
-            name: 'Flexible tenures',
-            description: 'Plan your loan repayment and choose tenure that suits you best (12 to 96 months).',
-          },
-          {
-            name: 'No collateral',
-            description: 'You do not need any collateral or guarantor to get your loan.',
-          },
-          {
-            name: 'No hidden charges',
-            description: 'All applicable fees and charges are mentioned up front.',
-          },
-          {
-            name: '3 unique variants',
-            description: 'Pick the loan variant that suits you best: Term loan, Flexi Term (Dropline) Loan, and Flexi Hybrid Term Loan.',
-          },
-          {
-            name: 'Loan of up to ₹55 lakh',
-            description: 'Manage your small or large expenses with loans ranging from ₹40,000 to ₹55 lakh.',
-          },
-          {
-            name: 'Approval in just 5 minutes',
-            description: 'Complete your entire application online and get instant approval.',
-          },
-        ],
-      },
-
-      interest_rates: {
-        title: 'Personal Loan Interest Rate and Charges',
-        charges: [
-          { type: 'Rate of interest per annum', amount: '10% to 31% p.a.' },
-          { type: 'Processing fees', amount: 'Up to 3.93% of loan amount (inclusive of taxes)' },
-          { type: 'Bounce charges', amount: '₹700 to ₹1,200 per bounce' },
-          { type: 'Prepayment charges (Term Loan)', amount: 'Up to 4.72% (inclusive of taxes) on outstanding amount' },
-          { type: 'Flexi Facility Charge', amount: '₹1,999 to ₹12,999 (for Flexi Loans only)' },
-          { type: 'Penal charge', amount: 'Up to 36% per annum from due date' },
-        ],
-        note: 'Stamp duty is payable as per state laws and deducted upfront from loan amount.',
-      },
-
-      documents: {
-        title: 'Documents Required for Personal Loan',
-        documents: [
-          'PAN Card',
-          'Aadhaar Card / Passport / Voter ID / Driving License',
-          'Latest 3 months salary slips',
-          'Last 3 months bank account statements',
-          'Employee ID card',
-          'Address proof (utility bill, property tax receipt, etc.)',
-          'Recent photograph',
-        ],
-        note: 'Additional documents may be required based on your profile.',
-      },
-
-      variants: {
-        title: 'Compare Personal Loan Variants',
-        variants: [
-          {
-            name: 'Term Loan',
-            description: 'Fixed EMIs that cover both principal and interest',
-            features: [
-              'Fixed EMI throughout tenure',
-              'Predictable payments',
-              'Simple structure',
-              'Best for regular income',
-              'Tenure: 12 to 96 months',
-            ],
-            charges: 'No Flexi facility charges',
-            partPrepayment: 'Up to 4.72% (inclusive of taxes)',
-          },
-          {
-            name: 'Flexi Hybrid Term Loan',
-            description: 'Interest-only EMIs for initial 24 months',
-            features: [
-              'Interest-only EMIs for first 24 months',
-              'Principal repayment starts from 25th month',
-              'Lower initial burden',
-              'Multiple withdrawals allowed',
-              'No part-prepayment charges',
-            ],
-            charges: 'Flexi facility charges: ₹1,999 to ₹12,999',
-            tenure: 'Initial: 24 months, Subsequent: Up to 72 months',
-          },
-          {
-            name: 'Flexi Term (Dropline) Loan',
-            description: 'Fixed EMIs with flexible prepayment options',
-            features: [
-              'Fixed EMIs on withdrawn amount',
-              'Decreasing principal over time',
-              'Part payment options',
-              'No part-prepayment charges',
-              'Multiple withdrawals allowed',
-            ],
-            charges: 'Flexi facility charges: ₹1,999 to ₹12,999',
-            tenure: '12 to 96 months',
-          },
-        ],
-      },
-    };
-
-    let responseData;
-    if (infoType === 'all') {
-      responseData = loanInfo;
-    } else {
-      responseData = loanInfo[infoType];
+          note: 'You should be 80 years or younger at the end of the loan tenure.'
+        },
+        features: {
+          title: 'Key Features & Benefits',
+          features: [
+            { name: 'Disbursal in 24 hours', description: 'Your loan amount will be credited to your account within 24 hours* of application approval.' },
+            { name: 'Flexible tenures', description: 'Plan your loan repayment and choose tenure that suits you best (12 to 96 months).' },
+            { name: 'No collateral', description: 'You do not need any collateral or guarantor to get your loan.' },
+            { name: 'No hidden charges', description: 'All applicable fees and charges are mentioned up front.' },
+            { name: '3 unique variants', description: 'Pick the loan variant that suits you best: Term loan, Flexi Term (Dropline) Loan, and Flexi Hybrid Term Loan.' },
+            { name: 'Loan of up to ₹55 lakh', description: 'Manage your small or large expenses with loans ranging from ₹40,000 to ₹55 lakh.' },
+            { name: 'Approval in just 5 minutes', description: 'Complete your entire application online and get instant approval.' }
+          ]
+        },
+        interest_rates: {
+          title: 'Personal Loan Interest Rate and Charges',
+          charges: [
+            { type: 'Rate of interest per annum', amount: '10% to 31% p.a.' },
+            { type: 'Processing fees', amount: 'Up to 3.93% of loan amount (inclusive of taxes)' },
+            { type: 'Bounce charges', amount: '₹700 to ₹1,200 per bounce' },
+            { type: 'Prepayment charges (Term Loan)', amount: 'Up to 4.72% (inclusive of taxes) on outstanding amount' },
+            { type: 'Flexi Facility Charge', amount: '₹1,999 to ₹12,999 (for Flexi Loans only)' },
+            { type: 'Penal charge', amount: 'Up to 36% per annum from due date' }
+          ],
+          note: 'Stamp duty is payable as per state laws and deducted upfront from loan amount.'
+        },
+        documents: {
+          title: 'Documents Required for Personal Loan',
+          documents: [
+            'PAN Card',
+            'Aadhaar Card / Passport / Voter ID / Driving License',
+            'Latest 3 months salary slips',
+            'Last 3 months bank account statements',
+            'Employee ID card',
+            'Address proof (utility bill, property tax receipt, etc.)',
+            'Recent photograph'
+          ],
+          note: 'Additional documents may be required based on your profile.'
+        },
+        variants: {
+          title: 'Compare Personal Loan Variants',
+          variants: [
+            {
+              name: 'Term Loan',
+              description: 'Fixed EMIs that cover both principal and interest',
+              features: [
+                'Fixed EMI throughout tenure',
+                'Predictable payments',
+                'Simple structure',
+                'Best for regular income',
+                'Tenure: 12 to 96 months'
+              ],
+              charges: 'No Flexi facility charges',
+              partPrepayment: 'Up to 4.72% (inclusive of taxes)'
+            },
+            {
+              name: 'Flexi Hybrid Term Loan',
+              description: 'Interest-only EMIs for initial 24 months',
+              features: [
+                'Interest-only EMIs for first 24 months',
+                'Principal repayment starts from 25th month',
+                'Lower initial burden',
+                'Multiple withdrawals allowed',
+                'No part-prepayment charges'
+              ],
+              charges: 'Flexi facility charges: ₹1,999 to ₹12,999',
+              tenure: 'Initial: 24 months, Subsequent: Up to 72 months'
+            },
+            {
+              name: 'Flexi Term (Dropline) Loan',
+              description: 'Fixed EMIs with flexible prepayment options',
+              features: [
+                'Fixed EMIs on withdrawn amount',
+                'Decreasing principal over time',
+                'Part payment options',
+                'No part-prepayment charges',
+                'Multiple withdrawals allowed'
+              ],
+              charges: 'Flexi facility charges: ₹1,999 to ₹12,999',
+              tenure: '12 to 96 months'
+            }
+          ]
+        }
+      };
+      const responseData = infoType === 'all' ? loanInfo : loanInfo[infoType];
+      return {
+        structuredContent: { infoType, data: responseData },
+        content: [ { type: 'text', text: `Personal loan info (${infoType}) loaded.` } ],
+        _meta: { full: loanInfo }
+      };
+    } catch (e) {
+      return { structuredContent: {}, content: [ { type: 'text', text: 'Error fetching loan info.' } ], _meta: { error: String(e?.message || e) } };
     }
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(responseData, null, 2),
-        },
-      ],
-    };
   }
 );
 
