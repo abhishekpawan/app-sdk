@@ -5,7 +5,16 @@ import express from 'express';
 import { z } from 'zod';
 
 const app = express();
-app.use(express.json());
+
+// Apply JSON middleware ONLY to non-MCP routes
+// The MCP SDK needs to read the raw request body stream
+app.use((req, res, next) => {
+  if (req.path === '/mcp/messages') {
+    // Skip JSON parsing for MCP message endpoint
+    return next();
+  }
+  express.json()(req, res, next);
+});
 
 // CORS middleware (add Accept header)
 app.use((req, res, next) => {
