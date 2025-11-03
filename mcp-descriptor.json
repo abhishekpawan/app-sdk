@@ -1,0 +1,127 @@
+{
+  "name": "bajaj-personal-loan-app",
+  "description": "ChatGPT App for Bajaj Finserv Personal Loan Information",
+  "version": "0.1.0",
+  "tools": [
+    {
+      "id": "getWeather",
+      "name": "Get Weather",
+      "description": "Return weather for a city",
+      "http": {
+        "method": "POST",
+        "url": "/tool/getWeather",
+        "content_type": "application/json"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": { "city": { "type": "string" } },
+        "required": ["city"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "city": { "type": "string" },
+          "tempC": { "type": "number" },
+          "condition": { "type": "string" }
+        }
+      }
+    },
+    {
+      "id": "getPersonalLoanInfo",
+      "name": "Get Personal Loan Information",
+      "description": "Get comprehensive personal loan information from Bajaj Finserv including EMI calculations, eligibility criteria, interest rates, and loan variants",
+      "http": {
+        "method": "POST",
+        "url": "/tool/getPersonalLoanInfo",
+        "content_type": "application/json"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "loanAmount": {
+            "type": "number",
+            "description": "Loan amount requested (between 40000 and 5500000)",
+            "minimum": 40000,
+            "maximum": 5500000
+          },
+          "tenure": {
+            "type": "number",
+            "description": "Loan tenure in months (between 12 and 96)",
+            "minimum": 12,
+            "maximum": 96
+          },
+          "loanVariant": {
+            "type": "string",
+            "description": "Type of loan variant",
+            "enum": ["term_loan", "flexi_hybrid", "flexi_dropline"]
+          },
+          "infoType": {
+            "type": "string",
+            "description": "Type of information requested",
+            "enum": [
+              "emi_calculation",
+              "eligibility",
+              "features",
+              "interest_rates",
+              "documents",
+              "all"
+            ]
+          }
+        },
+        "required": ["infoType"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "loanAmount": { "type": "number" },
+          "tenure": { "type": "number" },
+          "loanVariant": { "type": "string" },
+          "emiAmount": { "type": "number" },
+          "interestRate": { "type": "string" },
+          "processingFee": { "type": "string" },
+          "eligibility": {
+            "type": "object",
+            "properties": {
+              "minAge": { "type": "number" },
+              "maxAge": { "type": "number" },
+              "nationality": { "type": "string" },
+              "employment": { "type": "string" },
+              "cibilScore": { "type": "number" }
+            }
+          },
+          "features": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "documents": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "charges": {
+            "type": "object",
+            "properties": {
+              "interestRate": { "type": "string" },
+              "processingFee": { "type": "string" },
+              "prepaymentCharges": { "type": "string" },
+              "bounceCharges": { "type": "string" }
+            }
+          },
+          "variants": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "description": { "type": "string" },
+                "features": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "endpoints": {
+    "descriptor": "./.well-known/mcp-descriptor.json"
+  }
+}
