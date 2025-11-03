@@ -121,6 +121,9 @@
       }
     }
   ],
+  "auth": {
+    "type": "none"
+  },
   "endpoints": {
     "descriptor": "./.well-known/mcp-descriptor.json"
   }
