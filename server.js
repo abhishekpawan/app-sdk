@@ -11,9 +11,10 @@ app.use(express.json());
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  // Added Accept header
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  if (req.method === 'OPTIONS' && (req.path === '/mcp' || req.path === '/mcp/messages')) {
+    return res.sendStatus(204);
+  }
   next();
 });
 
@@ -21,11 +22,8 @@ app.use((req, res, next) => {
 function calculateEMI(principal, tenureMonths, interestRatePA) {
   // Convert annual rate to monthly rate
   const monthlyRate = interestRatePA / (12 * 100);
-  
-  // EMI formula: P × r × (1 + r)^n / ((1 + r)^n - 1)
-  const emi = (principal * monthlyRate * Math.pow(1 + monthlyRate, tenureMonths)) / 
-              (Math.pow(1 + monthlyRate, tenureMonths) - 1);
-  
+  const emi = (principal * monthlyRate * Math.pow(1 + monthlyRate, tenureMonths)) /
+    (Math.pow(1 + monthlyRate, tenureMonths) - 1);
   return Math.round(emi);
 }
 
@@ -35,7 +33,17 @@ const server = new McpServer({
   version: '0.1.0',
 });
 
-// Widget resource + constant (new)
+// Enhanced widget metadata helper
+function widgetMeta(extra = {}) {
+  return {
+    'openai/widgetAccessible': true,
+    'openai/resultCanProduceWidget': true,
+    'openai/widgetPrefersBorder': true,
+    ...extra,
+  };
+}
+
+// Widget resource + constant
 const LOAN_WIDGET_URI = 'ui://widget/personal-loan.html';
 server.registerResource(
   'personal-loan-widget',
@@ -47,11 +55,10 @@ server.registerResource(
         uri: LOAN_WIDGET_URI,
         mimeType: 'text/html+skybridge',
         text: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><title>Personal Loan Widget</title><style>body{font-family:system-ui,Arial,sans-serif;padding:12px;}h1{font-size:18px;margin:0 0 8px;}pre{white-space:pre-wrap;word-wrap:break-word;font-size:12px;background:#f7f7f7;padding:8px;border-radius:6px;border:1px solid #e0e0e0;}small{color:#555;}</style></head><body><h1>Personal Loan Data</h1><small>Structured content from tool output</small><div id="root"></div><script type="module">const out=window.openai?.toolOutput;const el=document.getElementById('root');if(out){el.innerHTML='<pre>'+JSON.stringify(out, null, 2)+'</pre>';}</script></body></html>`,
-        _meta: {
-          'openai/widgetPrefersBorder': true,
+        _meta: widgetMeta({
           'openai/widgetDescription': 'Displays EMI calculations and loan information.',
           'openai/widgetCSP': { connect_domains: [], resource_domains: [] }
-        }
+        })
       }
     ]
   })
@@ -68,11 +75,11 @@ server.registerTool(
       tenure: z.number().int().min(12).max(96).describe('Loan tenure in months (12 to 96)'),
       interestRate: z.number().min(10).max(31).default(15).optional().describe('Annual interest rate % (10% to 31% p.a.)')
     },
-    _meta: {
+    _meta: widgetMeta({
       'openai/outputTemplate': LOAN_WIDGET_URI,
       'openai/toolInvocation/invoking': 'Calculating EMI…',
       'openai/toolInvocation/invoked': 'EMI calculated'
-    }
+    })
   },
   async ({ loanAmount, tenure, interestRate = 15 }) => {
     try {
@@ -82,11 +89,11 @@ server.registerTool(
       return {
         structuredContent: {
           principal: loanAmount,
-          tenureMonths: tenure,
-          interestRateAnnualPercent: interestRate,
-          emiMonthly: emiAmount,
-          totalInterest,
-          totalPayment
+            tenureMonths: tenure,
+            interestRateAnnualPercent: interestRate,
+            emiMonthly: emiAmount,
+            totalInterest,
+            totalPayment
         },
         content: [
           {
@@ -101,17 +108,17 @@ server.registerTool(
               `⚠️ Indicative only. Actual rates may vary.`
           }
         ],
-        _meta: {
+        _meta: widgetMeta({
           formatted: {
             loanAmount: `₹${loanAmount.toLocaleString('en-IN')}`,
             monthlyEMI: `₹${emiAmount.toLocaleString('en-IN')}`,
             totalInterest: `₹${totalInterest.toLocaleString('en-IN')}`,
             totalPayment: `₹${totalPayment.toLocaleString('en-IN')}`
           }
-        }
+        })
       };
     } catch (e) {
-      return { structuredContent: {}, content: [ { type: 'text', text: 'Error computing EMI.' } ], _meta: { error: String(e?.message || e) } };
+      return { structuredContent: {}, content: [ { type: 'text', text: 'Error computing EMI.' } ], _meta: widgetMeta({ error: String(e?.message || e) }) };
     }
   }
 );
@@ -125,11 +132,11 @@ server.registerTool(
     inputSchema: {
       infoType: z.enum(['overview', 'eligibility', 'features', 'interest_rates', 'documents', 'variants', 'all']).describe('Type of information requested')
     },
-    _meta: {
+    _meta: widgetMeta({
       'openai/outputTemplate': LOAN_WIDGET_URI,
       'openai/toolInvocation/invoking': 'Fetching loan info…',
       'openai/toolInvocation/invoked': 'Loan info fetched'
-    }
+    })
   },
   async ({ infoType }) => {
     try {
@@ -245,33 +252,81 @@ server.registerTool(
       return {
         structuredContent: { infoType, data: responseData },
         content: [ { type: 'text', text: `Personal loan info (${infoType}) loaded.` } ],
-        _meta: { full: loanInfo }
+        _meta: widgetMeta({ full: loanInfo })
       };
     } catch (e) {
-      return { structuredContent: {}, content: [ { type: 'text', text: 'Error fetching loan info.' } ], _meta: { error: String(e?.message || e) } };
+      return { structuredContent: {}, content: [ { type: 'text', text: 'Error fetching loan info.' } ], _meta: widgetMeta({ error: String(e?.message || e) }) };
     }
   }
 );
+
+// Session management (SSE + POST message) similar to pizzaz example
+const sessions = new Map();
+const ssePath = '/mcp';
+const postPath = '/mcp/messages';
+
+async function handleSseRequest(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const transport = new SSEServerTransport(postPath, res);
+  const sessionId = transport.sessionId;
+  sessions.set(sessionId, { transport });
+  transport.onclose = () => {
+    sessions.delete(sessionId);
+  };
+  transport.onerror = (error) => {
+    console.error('SSE transport error', error);
+  };
+  try {
+    await server.connect(transport);
+  } catch (error) {
+    sessions.delete(sessionId);
+    console.error('Failed to start SSE session', error);
+    if (!res.headersSent) {
+      res.status(500).end('Failed to establish SSE connection');
+    }
+  }
+}
+
+async function handlePostMessage(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'content-type');
+  const sessionId = req.query.sessionId;
+  if (!sessionId) {
+    return res.status(400).end('Missing sessionId query parameter');
+  }
+  const session = sessions.get(sessionId);
+  if (!session) {
+    return res.status(404).end('Unknown session');
+  }
+  try {
+    await session.transport.handlePostMessage(req, res);
+  } catch (error) {
+    console.error('Failed to process message', error);
+    if (!res.headersSent) {
+      res.status(500).end('Failed to process message');
+    }
+  }
+}
 
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ ok: true, status: 'MCP Server is running' });
 });
 
-// MCP endpoint using SSE transport
-app.get('/mcp', async (req, res) => {
-  const transport = new SSEServerTransport('/mcp', res);
-  await server.connect(transport);
+// SSE stream endpoint
+app.get(ssePath, async (req, res) => {
+  await handleSseRequest(req, res);
 });
 
-app.post('/mcp', async (req, res) => {
-  const transport = new SSEServerTransport('/mcp', res);
-  await server.connect(transport);
+// POST message endpoint
+app.post(postPath, async (req, res) => {
+  await handlePostMessage(req, res);
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`✅ MCP Server running on http://localhost:${PORT}`);
-  console.log(`📡 MCP endpoint: http://localhost:${PORT}/mcp`);
+  console.log(`📡 SSE stream: GET http://localhost:${PORT}${ssePath}`);
+  console.log(`📨 Message post: POST http://localhost:${PORT}${postPath}?sessionId=...`);
   console.log(`🏥 Health check: http://localhost:${PORT}/health`);
 });
